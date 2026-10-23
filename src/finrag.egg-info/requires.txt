@@ -1,0 +1,7 @@
+pandas
+pypdf
+cryptography
+qdrant-client
+sentence-transformers
+python-dotenv
+langchain-openai

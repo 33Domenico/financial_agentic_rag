@@ -1,0 +1,9 @@
+README.md
+pyproject.toml
+src/finrag/__init__.py
+src/finrag/extraction.py
+src/finrag.egg-info/PKG-INFO
+src/finrag.egg-info/SOURCES.txt
+src/finrag.egg-info/dependency_links.txt
+src/finrag.egg-info/requires.txt
+src/finrag.egg-info/top_level.txt
