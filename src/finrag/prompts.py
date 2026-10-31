@@ -17,7 +17,7 @@ Reasoning: <one or two short sentences, including any calculation>
 Sources: <list of citations>"""
 
 
-HUMAN_TEMPLATE = """ge:
+HUMAN_TEMPLATE = """Context:
 {context}
 
 Question: {question}"""
