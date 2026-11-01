@@ -11,7 +11,7 @@ from langchain_openai import ChatOpenAI
 
 EMBED_MODEL = "google/embeddinggemma-2"
 LLM_MODEL = "nvidia/nemotron-3.5-super-vl:free"            # Nemotron su OpenRouter
-JUDGE_MODEL = "thinkingmachines/inkling:free"          # Inkling su OpenRouter
+JUDGE_MODEL = "google/gemma-4-26b-a4b-it"          # Gemma 4 26B A4B su OpenRouter
 COLLECTION = "financebench_pages_embgemma2_title"
 QDRANT_URL = "http://localhost:6333"
 TOP_K = 5
@@ -40,7 +40,7 @@ def get_llm(model_name: str = LLM_MODEL ):
     if not api_key:
         raise RuntimeError("Set OPENROUTER_API_KEY or OPENAI_API_KEY in your .env file")
     
-    llm=ChatOpenAI(model=model_name,base_url="https://openrouter.ai/api/v1", api_key=api_key ,temperature=0.0)
+    llm=ChatOpenAI(model=model_name,base_url="https://openrouter.ai/api/v1", api_key=api_key ,temperature=0.0,max_retries=6)
     return llm
 
 if __name__ == "__main__":
