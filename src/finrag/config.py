@@ -5,7 +5,8 @@ from sentence_transformers import SentenceTransformer
 import torch
 from qdrant_client import models, QdrantClient
 from langchain_openai import ChatOpenAI
-
+import json
+from pathlib import Path
 
 
 
@@ -30,7 +31,7 @@ def get_encoder():
 @lru_cache
 def get_qdrant():
     """Client connected to Qdrant in Docker."""
-    client = QdrantClient(url=QDRANT_URL)
+    client = QdrantClient(url=QDRANT_URL,timeout=300)
     return client
 
 @lru_cache
@@ -42,6 +43,13 @@ def get_llm(model_name: str = LLM_MODEL ):
     
     llm=ChatOpenAI(model=model_name,base_url="https://openrouter.ai/api/v1", api_key=api_key ,temperature=0.0,max_retries=6)
     return llm
+
+@lru_cache
+def get_companies()->list[str]:
+    """Retun the list of possible comanies to analize"""
+    with open(Path(__file__).parent / "companies.json"  ,encoding="utf-8") as f:
+        companies=json.load(f)
+    return companies
 
 if __name__ == "__main__":
     encoder = get_encoder()

@@ -3,7 +3,7 @@ from langgraph.graph import StateGraph, END
 from typing import TypedDict, Annotated, Sequence
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, ToolMessage
 from langgraph.graph.message import add_messages
-from finrag.tools import search_pages
+from finrag.tools import search_pages,extract_filter_from_query
 from finrag.prompts import format_context,SYSTEM_PROMPT, HUMAN_TEMPLATE
 from finrag.config import get_llm
 
@@ -12,11 +12,16 @@ from finrag.config import get_llm
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage],add_messages]
     documents: list[dict]
+    filters: dict
     
-    
-def retrieve(state: AgentState)->AgentState:
+def extract_filters(state: AgentState)->dict:
+    """Create the rigth filter based on the question so thath the extraction is easier"""
+    filters= extract_filter_from_query(state["messages"][-1].content).model_dump()
+    return{"filters": filters}
+  
+def retrieve(state: AgentState)->dict:
     """Search the documents for pages relevant to the question and return the list of retrieved pages."""
-    docs=search_pages(state["messages"][-1].content)
+    docs=search_pages(state["messages"][-1].content,**state["filters"])
     return {"documents": docs}
 
 def generate(state:AgentState)->AgentState:
@@ -36,10 +41,12 @@ def generate(state:AgentState)->AgentState:
     
 def build_graph():
     graph=StateGraph(AgentState)
+    graph.add_node("extract_filters",extract_filters)
     graph.add_node("generate",generate)
     graph.add_node("retriver",retrieve)
     
-    graph.set_entry_point("retriver")
+    graph.set_entry_point("extract_filters")
+    graph.add_edge("extract_filters","retriver")
     graph.add_edge("retriver","generate")
     graph.add_edge("generate",END)
     return graph.compile()

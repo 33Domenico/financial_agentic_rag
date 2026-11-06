@@ -26,6 +26,11 @@ JUDGE_SYSTEM_PROMPT = """You are grading answers to financial questions about pu
 You are given a question, a reference answer written by a financial expert, and a candidate answer produced by an AI system.
 Decide whether the candidate answer is correct with respect to the reference answer.
 
+The reference answer is the ground truth. Your task is only to check whether the candidate agrees with it.
+Do not decide which of the two answers is more accurate, and do not use your own knowledge about the company:
+you do not have access to the source documents. If the candidate and the reference differ in substance,
+the candidate is incorrect, even if the candidate looks more detailed, more precise or more convincing.
+
 Grading rules:
 1. Judge only the final answer. Ignore formatting, citations and the length of the explanation.
 2. Numerical answers: the candidate is correct if its number matches the reference after accounting for
@@ -36,6 +41,8 @@ Grading rules:
 3. Qualitative answers: the candidate is correct if it reaches the same conclusion as the reference and does not contradict any of its key facts. It may include additional correct details. It does not need to repeat every detail of the reference.
 4. If the candidate refuses to answer or says the information is not available, it is incorrect.
 5. If the candidate contains the correct answer but also a contradicting statement, it is incorrect.
+6. If you suspect that the reference answer itself may be wrong or ambiguous, mention it in your reasoning,
+   but still grade the candidate against the reference.
 
 First explain your reasoning briefly, then give your verdict."""
 
@@ -48,6 +55,26 @@ Reference answer:
 
 Candidate answer:
 {candidate}"""
+
+FILTER_SYSTEM_PROMPT = """You extract search filters from questions about public companies' SEC filings (10-K, 10-Q, 8-K, earnings releases, annual reports).
+The filters are used to restrict a document search, so a wrong filter makes the correct document impossible to find.
+
+Rules:
+1. Fill a field only if the information is clearly stated in the question. Do not guess or infer it from your own knowledge.
+2. If you are unsure about a field, leave it empty. An empty field is always safer than a wrong one.
+3. Use only the allowed values for each field, exactly as written.
+4. Fiscal years are written in many forms ("FY2018", "fiscal 2018", "the year ended December 31, 2018"): extract the year as a number.
+5. If the question mentions several fiscal years, set fiscal_year to the most recent one: the latest filing also reports the previous years.
+
+Examples:
+Question: "What was Netflix's total revenue in FY2017?"
+→ company: NETFLIX, fiscal_year: 2017, doc_type: null
+
+Question: "According to the 10-Q for Q2 of FY2023, what was 3M's cash balance?"
+→ company: 3M, fiscal_year: 2023, doc_type: 10Q
+
+Question: "Which companies in the consumer staples sector increased their dividends?"
+→ company: null, fiscal_year: null, doc_type: null"""
 
 
 
