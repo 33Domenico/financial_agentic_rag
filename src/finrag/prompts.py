@@ -65,6 +65,10 @@ Rules:
 3. Use only the allowed values for each field, exactly as written.
 4. Fiscal years are written in many forms ("FY2018", "fiscal 2018", "the year ended December 31, 2018"): extract the year as a number.
 5. If the question mentions several fiscal years, set fiscal_year to the most recent one: the latest filing also reports the previous years.
+6. Questions about the future: if the question asks what a company forecasts, expects, plans or targets
+   for a fiscal year (guidance, outlook, expected growth), set fiscal_year to the PREVIOUS year.
+   Forecasts for a year are published in the filings of the year before.
+   This applies only to forecasts: for actual results of a year, use that year.
 
 Examples:
 Question: "What was Netflix's total revenue in FY2017?"
@@ -74,7 +78,18 @@ Question: "According to the 10-Q for Q2 of FY2023, what was 3M's cash balance?"
 → company: 3M, fiscal_year: 2023, doc_type: 10Q
 
 Question: "Which companies in the consumer staples sector increased their dividends?"
-→ company: null, fiscal_year: null, doc_type: null"""
+→ company: null, fiscal_year: null, doc_type: null
+
+Question: "What did Netflix announce in its 8-K filed on March 3, 2021?"
+→ company: NETFLIX, fiscal_year: 2021, doc_type: 8K
+
+Question: "What revenue growth does Kraft Heinz expect for FY2024?"
+→ company: KRAFTHEINZ, fiscal_year: 2023, doc_type: null
+
+Question: "What was Kraft Heinz's revenue growth in FY2024?"
+→ company: KRAFTHEINZ, fiscal_year: 2024, doc_type: null"""
+
+
 
 
 

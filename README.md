@@ -19,7 +19,7 @@ In the FinanceBench paper, GPT-4-Turbo with a shared vector store over all filin
 ```mermaid
 flowchart LR
     Q([Question]) --> F[extract_filters<br/>company · fiscal year · doc type]
-    F --> R[retrieve<br/>filtered vector search on Qdrant]
+    F --> R[retrieve<br/>filtered vector search on Qdrant<br/>+ cross-encoder reranking]
     R --> G[generate<br/>answer with citations]
     G --> A([Answer])
 ```
@@ -27,7 +27,7 @@ flowchart LR
 | Node | What it does |
 | --- | --- |
 | `extract_filters` | An LLM with structured output extracts company, fiscal year and document type from the question. A field is filled only if it is clearly stated; otherwise it is left empty (no filter). |
-| `retrieve` | Semantic search over the page index, restricted by the extracted filters. |
+| `retrieve` | Semantic search over the page index, restricted by the extracted filters (20 candidates), then a cross-encoder reranker keeps the 5 most relevant pages. |
 | `generate` | Answers using only the retrieved pages, with explicit citations `[document, page N]`, a fixed output format and a mandatory refusal when the information is missing. |
 
 The baseline graph has no `extract_filters` node (`build_graph(use_filters=False)`).
@@ -79,6 +79,7 @@ Embedding the whole corpus took **71 minutes** on an RTX 4050 Laptop GPU (6 GB V
 | Filter extraction | same as generator | Structured output with Pydantic; company constrained to the codes in the index (`Literal`) |
 | Judge | `google/gemma-4-26b-a4b-it` (OpenRouter) | Different model family from the generator, to avoid self-preference bias |
 | Embeddings | `google/embeddinggemma-2` | Local, BF16 |
+| Reranker | `cross-encoder/ettin-reranker-400m-v1` | Local cross-encoder, BF16, 8K-token context (long pages fit) |
 
 ---
 
@@ -109,6 +110,7 @@ Development set (51 questions), top-5 pages. Retrieval metrics are independent o
 | --- | --- | --- | --- |
 | Baseline (page index + title, no filters) | 0.57 | 0.48 | 0.69 |
 | + metadata filters (company, fiscal year, doc type) | 0.57 | 0.51 | 0.76 |
+| + improved filter prompt + reranking (20 candidates → top 5) | 0.71 | 0.65 | 0.84 |
 
 ---
 
@@ -128,8 +130,9 @@ Observations so far:
 - [x] Data checks, page-level index, baseline RAG graph
 - [x] Evaluation pipeline (hit rate, evidence recall, LLM judge) on Langfuse
 - [x] Metadata extraction and filtered retrieval
+- [x] Cross-encoder reranking
 - [ ] Fallback search when filters are too restrictive
-- [ ] Hybrid search (BM25 + dense) and reranking
+- [ ] Hybrid search (BM25 + dense)
 - [ ] Contextual chunks / token-level chunking experiments
 - [ ] Numerical tools on XBRL data (SEC `companyfacts` API) and query routing
 - [ ] Agentic retrieval (ReAct / query decomposition for multi-statement questions)

@@ -1,7 +1,7 @@
 import os
 from functools import lru_cache
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 import torch
 from qdrant_client import models, QdrantClient
 from langchain_openai import ChatOpenAI
@@ -9,12 +9,13 @@ import json
 from pathlib import Path
 
 
-
+RANKED_MODEL="cross-encoder/ettin-reranker-400m-v1"
 EMBED_MODEL = "google/embeddinggemma-2"
 LLM_MODEL = "nvidia/nemotron-3.5-super-vl:free"            # Nemotron su OpenRouter
 JUDGE_MODEL = "google/gemma-4-26b-a4b-it"          # Gemma 4 26B A4B su OpenRouter
 COLLECTION = "financebench_pages_embgemma2_title"
 QDRANT_URL = "http://localhost:6333"
+TOP_K_R=20
 TOP_K = 5
 
 load_dotenv()
@@ -50,6 +51,16 @@ def get_companies()->list[str]:
     with open(Path(__file__).parent / "companies.json"  ,encoding="utf-8") as f:
         companies=json.load(f)
     return companies
+
+@lru_cache
+def get_reranker():
+    """Load reranker model"""
+    model = CrossEncoder(
+        RANKED_MODEL,
+        model_kwargs={"dtype": "bfloat16", "attn_implementation": "sdpa"},
+    )
+    return model
+
 
 if __name__ == "__main__":
     encoder = get_encoder()

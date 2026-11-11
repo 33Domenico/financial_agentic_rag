@@ -22,8 +22,12 @@ class QueryFilters(BaseModel):
         default=None,
         description=(
             "The fiscal year of the document to search, e.g. 2018 for 'FY2018'. "
+            "Years can also appear inside dates (e.g. 'the 8-K dated July 1, 2022' -> 2022). "
             "If the question covers several years (e.g. 'FY2017-FY2019'), use the most recent one, "
             "since the latest filing usually reports the previous years too. "
+            "If the question asks about forecasts, expectations, targets or guidance for a year "
+            "(e.g. 'What revenue growth does the company expect for FY2023?'), use the previous year (2022), "
+            "since forecasts for a year are published in the filings of the year before. "
             "Leave empty if no year is mentioned."
         ),
     )

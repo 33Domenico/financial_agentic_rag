@@ -3,7 +3,7 @@ from langgraph.graph import StateGraph, END
 from typing import TypedDict, Annotated, Sequence
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, ToolMessage
 from langgraph.graph.message import add_messages
-from finrag.tools import search_pages,extract_filter_from_query
+from finrag.tools import search_pages,extract_filter_from_query,rerank_pages
 from finrag.prompts import format_context,SYSTEM_PROMPT, HUMAN_TEMPLATE
 from finrag.config import get_llm
 
@@ -22,7 +22,8 @@ def extract_filters(state: AgentState)->dict:
 def retrieve(state: AgentState)->dict:
     """Search the documents for pages relevant to the question and return the list of retrieved pages."""
     docs=search_pages(state["messages"][-1].content,**state["filters"])
-    return {"documents": docs}
+    ranked_docs=rerank_pages(state["messages"][-1].content,docs)
+    return {"documents": ranked_docs}
 
 def generate(state:AgentState)->AgentState:
     """Builds the prompt, calls the LLM, and updates the message by appending the response."""

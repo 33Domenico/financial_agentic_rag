@@ -1,4 +1,4 @@
-from finrag.config import get_encoder, get_qdrant, get_llm,TOP_K,COLLECTION
+from finrag.config import get_encoder, get_qdrant, get_llm,TOP_K,COLLECTION,TOP_K_R,get_reranker
 from finrag.schema import QueryFilters
 from langchain_core.messages import SystemMessage, HumanMessage
 from finrag.prompts import FILTER_SYSTEM_PROMPT
@@ -10,7 +10,7 @@ def get_filter_llm():
     """LLM with structured output used to extract search filters from a question."""
     return get_llm().with_structured_output(QueryFilters)
 
-def search_pages(query: str,company: str | None = None, fiscal_year: int | None= None ,doc_type: str | None = None, k: int= TOP_K)->list[dict]:
+def search_pages(query: str,company: str | None = None, fiscal_year: int | None= None ,doc_type: str | None = None, k: int= TOP_K_R)->list[dict]:
     """Search SEC filings for the pages most relevant to a question.
 
     Performs a semantic search over the pages of 10-K, 10-Q, 8-K, earnings
@@ -57,6 +57,19 @@ def search_pages(query: str,company: str | None = None, fiscal_year: int | None=
     
     pages=[{**p.payload,"score": p.score} for p in result]
     return pages
+ 
+
+def rerank_pages(query: str,doc_list:list[dict], k: int= TOP_K)-> list[dict]:
+    """"""
+    model=get_reranker()
+    page_list_formatted=[f"{doc["doc_name"]} \n{doc["text"]}" for doc in doc_list ]
+    ranked=model.rank(query,page_list_formatted,top_k=k)
+    pages=[{**doc_list[r["corpus_id"]], "rerank_score": r["score"]} for r in ranked ]
+    return pages
+    
+    
+    
+    
     
 def  extract_filter_from_query(query: str)->QueryFilters:
     """Extract search filters (company, fiscal year, document type) from a question.
