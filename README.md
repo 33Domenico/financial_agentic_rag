@@ -100,6 +100,8 @@ The judge compares the candidate answer with the reference answer and returns a 
 - refusals are incorrect;
 - **the reference answer is the ground truth**: the judge must not decide which answer is "more accurate" or use its own knowledge (judge v2, introduced after observing this failure mode). Suspected errors in the reference are reported in the reasoning, not in the verdict.
 
+**Judge stability**: on identical system answers, at least 2 questions changed verdict between runs. Both are borderline cases, where the answer reaches the right conclusion but uses a different breakdown than the reference (e.g. products vs services instead of business segments). Differences of 1–2 questions between experiments are therefore treated as noise.
+
 ---
 
 ## Results
@@ -110,7 +112,25 @@ Development set (51 questions), top-5 pages. Retrieval metrics are independent o
 | --- | --- | --- | --- |
 | Baseline (page index + title, no filters) | 0.57 | 0.48 | 0.69 |
 | + metadata filters (company, fiscal year, doc type) | 0.57 | 0.51 | 0.76 |
-| + improved filter prompt + reranking (20 candidates → top 5) | 0.71 | 0.65 | 0.84 |
+| + improved filter prompt (forecasts, dates) | 0.59 | 0.53 | 0.77 |
+| + cross-encoder reranking (20 candidates → top 5) | 0.71 | 0.65 | 0.84 |
+
+### Number of pages passed to the generator
+
+Same pipeline (filters + reranking over 20 candidates), changing only how many reranked pages reach the generator.
+
+| Pages to the generator | Hit rate | Evidence recall | Correctness |
+| --- | --- | --- | --- |
+| 5 | 0.71 | 0.65 | 0.84 |
+| 8 | 0.77 | 0.73 | 0.84 |
+
+Average correctness is unchanged, but the per-question view tells a different story:
+- **a real gain on multi-statement questions.** For the Adobe operating cash flow ratio, the balance sheet was ranked 6th after reranking: with 5 pages it was left out and the model correctly refused; with 8 pages both statements are in the context and the model computes the exact answer (0.66).
+- **a case that more context does not fix.** For the AES inventory turnover, both required statements are now in the context, but the answer is still wrong: the model keeps arguing that the ratio is not meaningful for a utility instead of computing it. This is a reasoning error, not a retrieval one.
+- **a loss that is judge noise.** One question flipped from correct to incorrect with a word-for-word identical answer (a borderline case, see *Judge stability*).
+- all other answers are unchanged.
+
+With 51 questions and a judge that can flip 1–2 borderline verdicts, the average hides the effect: per-question inspection shows that more pages fix exactly the failure mode found in the error analysis (questions needing two financial statements), at the cost of a ~60% longer context. The same questions are also the target of the numerical tools of the next step, which return figures such as current liabilities or operating cash flow directly.
 
 ---
 

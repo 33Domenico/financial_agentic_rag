@@ -16,7 +16,7 @@ JUDGE_MODEL = "google/gemma-4-26b-a4b-it"          # Gemma 4 26B A4B su OpenRout
 COLLECTION = "financebench_pages_embgemma2_title"
 QDRANT_URL = "http://localhost:6333"
 TOP_K_R=20
-TOP_K = 5
+TOP_K = 8
 
 load_dotenv()
 

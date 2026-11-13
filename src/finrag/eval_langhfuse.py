@@ -1,3 +1,5 @@
+import re
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse import Evaluation
 from langfuse.langchain import CallbackHandler
@@ -15,7 +17,26 @@ class Verdict(BaseModel):
     is_correct: bool = Field(description="True if the candidate answer is correct")
 
 
-judge = get_llm(JUDGE_MODEL).with_structured_output(Verdict)
+_judge_llm = get_llm(JUDGE_MODEL)
+# Il giudice a volte non chiude il JSON e continua a generare spazi/newline
+# all'infinito: un tetto sui token evita risposte da 35k righe.
+_judge_llm.max_tokens = 2000
+judge = _judge_llm.with_structured_output(Verdict, include_raw=True)
+
+
+def _parse_verdict(out: dict) -> Verdict:
+    """Usa l'output strutturato; se il JSON e' troncato, recupera i campi a mano."""
+    if out.get("parsed") is not None:
+        return out["parsed"]
+    text = out["raw"].content if out.get("raw") is not None else ""
+    m = re.search(r'"is_correct"\s*:\s*(true|false)', text)
+    if not m:
+        raise ValueError(f"Judge output non interpretabile: {text[:200]!r}")
+    r = re.search(r'"reasoning"\s*:\s*"((?:[^"\\]|\\.)*)', text)
+    return Verdict(
+        is_correct=m.group(1) == "true",
+        reasoning=(r.group(1) if r else "")[:500] or "(JSON troncato)",
+    )
 
 
 # --- Task (era "target") ---------------------------------------------------
@@ -60,10 +81,10 @@ def correctness(*, input, output, expected_output, **kwargs) -> Evaluation:
         reference=expected_output["answer"],
         candidate=output["answer"],
     )
-    verdict = judge.invoke([
+    verdict = _parse_verdict(judge.invoke([
         SystemMessage(content=JUDGE_SYSTEM_PROMPT),
         HumanMessage(content=user_prompt),
-    ])
+    ]))
     return Evaluation(name="correctness", value=float(verdict.is_correct), comment=verdict.reasoning)
 
 

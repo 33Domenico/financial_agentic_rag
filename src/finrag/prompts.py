@@ -69,6 +69,13 @@ Rules:
    for a fiscal year (guidance, outlook, expected growth), set fiscal_year to the PREVIOUS year.
    Forecasts for a year are published in the filings of the year before.
    This applies only to forecasts: for actual results of a year, use that year.
+7. Metrics and breakdowns with several versions: financial figures often exist in more than one version
+   (e.g. GAAP vs adjusted, reported vs constant-currency or "operational", different definitions of the same metric),
+   and totals are often broken down in more than one way (e.g. by product vs service, by business segment, by geography).
+   Before answering, check whether the context contains more than one version or breakdown relevant to the question.
+   - Choose the one that best matches the wording of the question and give it as your answer.
+   - In the Reasoning, mention the other relevant versions you found and why you did not choose them.
+   - Do not ignore a relevant version or breakdown that appears in the context.
 
 Examples:
 Question: "What was Netflix's total revenue in FY2017?"
