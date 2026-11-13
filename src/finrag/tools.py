@@ -1,9 +1,43 @@
 from finrag.config import get_encoder, get_qdrant, get_llm,TOP_K,COLLECTION,TOP_K_R,get_reranker
-from finrag.schema import QueryFilters
+from finrag.schema import QueryFilters,COMPANIES
 from langchain_core.messages import SystemMessage, HumanMessage
 from finrag.prompts import FILTER_SYSTEM_PROMPT
 from qdrant_client import models
 from functools import lru_cache
+import ast
+import operator
+from langchain_core.tools import tool
+from typing import Literal
+from finrag.xbrl import get_metric, get_metric_vocabulary
+METRICS = tuple(get_metric_vocabulary())
+
+
+_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+def _evaluate(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in _OPERATORS:
+        return _OPERATORS[type(node.op)](_evaluate(node.left), _evaluate(node.right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _OPERATORS:
+        return _OPERATORS[type(node.op)](_evaluate(node.operand))
+    raise ValueError(f"Unsupported element in expression: {ast.dump(node)}")
+
+
+def calculate(expression: str) -> float:
+    """Safely evaluate an arithmetic expression with numbers, + - * / ** and parentheses."""
+    tree = ast.parse(expression, mode="eval")
+    return _evaluate(tree.body)
+
 
 @lru_cache
 def get_filter_llm():
@@ -91,5 +125,34 @@ def  extract_filter_from_query(query: str)->QueryFilters:
     ])
     
     
+@tool
+def  calculator(expression: str)->float:
+    """Evaluate an arithmetic expression and return the result.
     
-    
+    Use it for every calculation, never compute in your head.
+    Supports numbers, + - * / ** and parentheses, e.g. "(1469502000 / 2213556000)".
+    Write the numbers exactly as returned by get_financial_metric.
+    """
+    return calculate(expression)
+
+@tool
+def get_financial_metric(
+    company: Literal[COMPANIES],
+    metric: Literal[METRICS],
+    fiscal_year: int,
+) -> dict:
+    """Read one annual financial statement value of a company from its 10-K (SEC XBRL data).
+
+    Use it for every number you need: call it once per metric and per fiscal year
+    (e.g. for an average of total assets over FY2019-FY2020, call it twice).
+    Values are in raw USD (not millions). Balance sheet items (assets, liabilities,
+    inventory, receivables, payables, PP&E) are measured at the end of the fiscal year.
+
+    Returns the value with its source (XBRL concept, period end, filing date),
+    or {"value": null} if the company does not report this metric for that year.
+    """
+    result = get_metric(company, metric, fiscal_year)
+    return result if result is not None else {"company": company, "metric": metric,
+                                               "fiscal_year": fiscal_year, "value": None}
+
+FINANCIAL_TOOLS = [get_financial_metric, calculator]

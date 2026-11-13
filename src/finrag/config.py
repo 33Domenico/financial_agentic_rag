@@ -36,14 +36,17 @@ def get_qdrant():
     return client
 
 @lru_cache
-def get_llm(model_name: str = LLM_MODEL ):
-    """ChatOpenAI puntato a openrouter, temperature=0.0 """
-    api_key= os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError("Set OPENROUTER_API_KEY or OPENAI_API_KEY in your .env file")
-    
-    llm=ChatOpenAI(model=model_name,base_url="https://openrouter.ai/api/v1", api_key=api_key ,temperature=0.0,max_retries=6)
-    return llm
+def get_llm(model_name: str = LLM_MODEL, reasoning_effort: str | None = None):
+    """ChatOpenAI pointed at OpenRouter. reasoning_effort: "none", "minimal", "low", "medium", "high"."""
+    extra_body = {"reasoning": {"effort": reasoning_effort}} if reasoning_effort else None
+    return ChatOpenAI(
+        model=model_name,
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+        temperature=0.0,
+        extra_body=extra_body,
+        max_retries=10
+    )
 
 @lru_cache
 def get_companies()->list[str]:

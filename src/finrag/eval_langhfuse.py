@@ -41,25 +41,25 @@ def _parse_verdict(out: dict) -> Verdict:
 
 # --- Task (era "target") ---------------------------------------------------
 def task(*, item, **kwargs) -> dict:
-    """Esegue il grafo su un elemento del dataset."""
-    # Con i dataset di Langfuse "item" è un oggetto (item.input);
-    # con dati locali è un dizionario (item["input"]).
-    item_input = item["input"] if isinstance(item, dict) else item.input
-
-    handler = CallbackHandler() 
+    item_input = item.input if hasattr(item, "input") else item["input"]
     result = app.invoke(
         {"messages": [HumanMessage(content=item_input["question"])]},
-        config={"callbacks": [handler]},
+        config={"callbacks": [CallbackHandler()]},
     )
+    documents = result.get("documents") or []
     return {
         "answer": result["messages"][-1].content,
-        "retrieved_pages": [[d["doc_name"], d["page_num"]] for d in result["documents"]],
+        "route": result["route"],
+        "used_rag": bool(documents),          # vero anche per i fallback
+        "retrieved_pages": [[d["doc_name"], d["page_num"]] for d in documents],
     }
 
 
 # --- Evaluator --------------------------------------------------------------
 
 def hit_rate(*, output, expected_output, **kwargs) -> Evaluation:
+    if not output["used_rag"]:
+        return []        
     retrieved = output["retrieved_pages"]
     evidence = expected_output["evidence_pages"]
     hit = any(page in retrieved for page in evidence)
@@ -67,6 +67,8 @@ def hit_rate(*, output, expected_output, **kwargs) -> Evaluation:
 
 
 def evidence_recall(*, output, expected_output, **kwargs) -> Evaluation:
+    if not output["used_rag"]:
+        return []  
     retrieved = output["retrieved_pages"]
     evidence = expected_output["evidence_pages"]
     if not evidence:
@@ -74,6 +76,13 @@ def evidence_recall(*, output, expected_output, **kwargs) -> Evaluation:
     found = sum(1 for page in evidence if page in retrieved)
     return Evaluation(name="evidence_recall", value=found / len(evidence))
 
+def route_numeric(*, output, **kwargs):
+    """Quota di domande mandate al ramo numerico."""
+    return Evaluation(name="route_numeric", value=float(output["route"] == "numeric"))
+
+def fallback(*, output, **kwargs):
+    """Domande mandate al numerico che sono finite nel RAG."""
+    return Evaluation(name="fallback", value=float(output["route"] == "numeric" and output["used_rag"]))
 
 def correctness(*, input, output, expected_output, **kwargs) -> Evaluation:
     user_prompt = JUDGE_USER_TEMPLATE.format(
@@ -88,11 +97,20 @@ def correctness(*, input, output, expected_output, **kwargs) -> Evaluation:
     return Evaluation(name="correctness", value=float(verdict.is_correct), comment=verdict.reasoning)
 
 
+REFUSAL_MARKER = "does not contain enough information"
+
+
+def refusal(*, output, **kwargs) -> Evaluation:
+    """1.0 se la risposta finale è un rifiuto (informazioni non trovate), 0.0 altrimenti."""
+    is_refusal = REFUSAL_MARKER in output["answer"].lower()
+    return Evaluation(name="refusal", value=float(is_refusal))
+
+
 def average_scores(*, item_results, **kwargs) -> list[Evaluation]:
     """Media di ogni metrica sull'intero esperimento."""
     results = []
     #per ogni domanda, e per goni voto di quella domanda se corrisponde alla metrica aggiungilo alla lista 
-    for name in ["hit_rate", "evidence_recall", "correctness"]:
+    for name in ["hit_rate", "evidence_recall", "correctness","route_numeric","fallback","refusal"]:
         values = [e.value for r in item_results for e in r.evaluations if e.name == name]
         if values:
             results.append(Evaluation(name=f"avg_{name}", value=sum(values) / len(values)))

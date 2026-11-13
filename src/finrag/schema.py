@@ -41,3 +41,10 @@ class QueryFilters(BaseModel):
             "Leave empty if the question does not specify the type of document."
         ),
     )
+    
+class Route(BaseModel):
+    reasoning: str = Field(description="One short sentence explaining the choice.")
+    route: Literal["numeric", "text"] = Field(
+        description="'numeric' if the answer can be computed from annual financial statement line items, "
+                    "'text' otherwise."
+    )   
