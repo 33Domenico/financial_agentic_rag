@@ -255,7 +255,6 @@ What the test set adds to the development analysis:
 ### Future work
 These changes come from the test-set analysis. They are not applied, so that the reported test score remains a clean measurement; each would need to be validated on the development set first.
 - Retry retrieval without filters when the extracted filters return no pages.
-- Check the revenue concepts in the metric vocabulary (General Mills) and the 2018 inventory value for Kraft Heinz.
 - Make "value not found in XBRL" always lead to `MISSING_DATA`, even when the question suggests a default answer.
 - Route annual balance-sheet ratios to the financial agent even when the question asks whether the metric is relevant.
 - Expose the metric definition used (e.g. which assets enter the quick ratio) more explicitly in the answer, since definition mismatches are the largest error category.
