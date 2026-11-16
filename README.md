@@ -78,7 +78,7 @@ Structured figures come from the SEC **companyfacts** API (EDGAR), one JSON file
 
 | Choice | Value | Rationale |
 | --- | --- | --- |
-| Chunking | **one chunk per page** | Page-level chunking had the best and most stable accuracy on paginated financial PDFs in NVIDIA's chunking benchmark; it keeps tables intact and matches the page-level evidence of FinanceBench. |
+| Chunking | **one chunk per page** | In NVIDIA's chunking benchmark, page-level chunking had the best average and most stable accuracy across financial datasets (on FinanceBench alone, 1,024-token chunks scored slightly higher). It keeps tables intact and matches the page-level evidence of FinanceBench. |
 | Embedding model | **EmbeddingGemma 2** (768 dims, BF16, local GPU) | Strong model under 1B parameters, 8K-token context (the longest page fits), runs locally for free. Must not run in FP16. |
 | Document prefix | `title: {doc_name} \| text: {page}` | The model card format; the title gives each page its company/year/type context. |
 | Query prefix | `task: question answering \| query: {question}` | Asymmetric retrieval prompt from the model card. |
@@ -110,13 +110,14 @@ The model reasons by default, and reasoning tokens count against the output limi
 
 ## Evaluation
 
-All experiments run on the same 51 development questions with **Langfuse** datasets and experiments.
+All design decisions are made on the 51 development questions with **Langfuse** datasets and experiments. The final system is then evaluated **once** on the 99 test questions, with no change after seeing the results.
 
 | Metric | Type | What it measures |
 | --- | --- | --- |
 | `hit_rate` | deterministic | At least one evidence page is among the retrieved pages |
 | `evidence_recall` | deterministic | Fraction of the evidence pages that were retrieved (relevant for multi-page questions) |
 | `correctness` | LLM-as-judge | The answer agrees with the reference answer |
+| `refusal` | deterministic | The answer is the fixed "not enough information" reply |
 | `route_numeric`, `fallback` | deterministic | Share of questions sent to the financial agent, and of those rerouted to the RAG branch |
 
 With the router, `hit_rate` and `evidence_recall` are computed **only on questions that went through the RAG branch**: questions answered from XBRL retrieve no pages.
@@ -128,7 +129,7 @@ The judge compares the candidate answer with the reference answer and returns a 
 - refusals are incorrect;
 - **the reference answer is the ground truth**: the judge must not decide which answer is "more accurate" or use its own knowledge (judge v2, introduced after observing this failure mode). Suspected errors in the reference are reported in the reasoning, not in the verdict.
 
-**Judge stability**: on identical system answers, at least 2 questions changed verdict between runs. Both are borderline cases, where the answer reaches the right conclusion but uses a different breakdown than the reference (e.g. products vs services instead of business segments). Differences of 1–2 questions between experiments are therefore treated as noise.
+**Judge stability**: on identical system answers, at least 2 questions changed verdict between runs. Both are borderline cases, where the answer reaches the right conclusion but uses a different breakdown than the reference (e.g. products vs services instead of business segments). Differences of 1–2 questions between experiments are therefore treated as noise. A repeated run of the final system on the development set scored 0.86 instead of 0.84, with nearly identical answers.
 
 ---
 
@@ -176,6 +177,31 @@ The full graph (router, financial agent with tools, RAG branch with 8 reranked p
 
 Hit rate and evidence recall of this experiment (0.66 and 0.63) are computed on the 29 questions of the RAG branch only, so they are not comparable with the table above.
 
+### Final evaluation on the test set
+
+The final system (router + XBRL financial agent + RAG branch with filters and reranking over 8 pages) was frozen and run once on the 99 test questions.
+
+| | Development (51) | Test (99) |
+| --- | --- | --- |
+| **Correctness** | 0.84 | **0.69** |
+| Refusals | 1 (2%) | 11 (11%) |
+| Questions to the financial agent | 43% | 51% |
+| Fallbacks to RAG | 0 | 7 (6 of them answered correctly) |
+| Hit rate / evidence recall (RAG branch only) | 0.66 / 0.63 | 0.61 / 0.59 |
+
+| Breakdown on the test set | Questions | Correctness |
+| --- | --- | --- |
+| `metrics-generated` | 33 | **0.91** |
+| `domain-relevant` | 33 | 0.64 |
+| `novel-generated` | 33 | 0.52 |
+| Numeric branch (XBRL agent, including fallbacks) | 50 | **0.82** |
+| Text branch (RAG) | 49 | 0.55 |
+
+- **The drop from development to test comes from the text branch.** The XBRL agent generalizes: computed answers stay above 90% on unseen `metrics-generated` questions. Open questions answered from filing pages fall to about half.
+- **Part of the gap is overfitting to the development set.** The filter, router and agent prompts were refined by reading the errors on those 51 questions; the test set measures how much of that carries over.
+- **Refusals weigh a lot**: 11 of the 31 errors are refusals, which the judge always counts as wrong. On the questions the system answers, correctness is 68/88 (0.77).
+- **The fallback works in practice**: it never triggered on the development set, while on the test set 7 numeric questions fell back to retrieval (e.g. an agent asking for a metric outside the vocabulary, receiving the list of valid metrics, and switching to `MISSING_DATA`), and 6 of them were answered correctly.
+
 ---
 
 ## Error analysis
@@ -187,7 +213,7 @@ Retrieval failures of the baseline fall into three categories: wrong company, ri
 - Inside the correct document, similarity scores of the top pages are very close (e.g. 0.846 vs 0.829), which made page ranking the main bottleneck before reranking.
 - **Retrieval metrics underestimate the system**: in 13 of 51 questions the system answers correctly without retrieving the annotated evidence page, because the same information appears in several pages or filings (e.g. a figure from a later 10-K that reports the year as comparison).
 
-### Residual errors
+### Residual errors on the development set
 After routing, the 8 incorrect answers fall into categories that neither better retrieval nor better tools can fix:
 
 | Question | Branch | Cause |
@@ -199,9 +225,42 @@ After routing, the 8 incorrect answers fall into categories that neither better 
 | Best Buy, number of stores | text | Stores under the Best Buy brand vs total stores in the reference table |
 | Boeing, revenue categories | text | Products vs services instead of business segments; borderline, the judge flips |
 | American Express, geographies | text | Countries with the largest credit exposure instead of reporting regions; borderline, the judge flips |
-| Pfizer, spin-off | text | Refusal: evidence page not retrieved; the reference itself is questionable (the Upjohn separation was completed in 2020) |
+| Pfizer, spin-off | text | Refusal: evidence page not retrieved |
 
 When the information is missing, the system **refuses or falls back** instead of hallucinating a number: no residual error comes from an invented value or a wrong calculation.
+
+### Errors on the test set
+The 31 incorrect answers on the test set, classified by reading each answer against the reference:
+
+| Cause | Errors | Examples |
+| --- | --- | --- |
+| Different metric definition or convention (correct calculation) | 6 | Quick ratio for 3M, AMD and Verizon (which assets count as "quick"); sign convention of Boeing's 2021 tax rate; negative interest coverage vs "zero" |
+| Different interpretation of a qualitative question | 5 | "Capital-intensive" judged with different metrics (3M, CVS); countries instead of regions (PepsiCo); "best performing" category by mix instead of growth (Best Buy) |
+| Evidence page not retrieved | 6 | Balance sheet missing for Amcor and Pfizer; J&J gain on the Kenvue separation; PepsiCo legal proceedings |
+| Wrong filters or wrong document | 6 | Two questions with **zero pages retrieved** because the extracted filters excluded everything; questions without a year or a company name (one Ulta Beauty question never names the company, and the system answers about Amcor) |
+| Refusal with the evidence page in context | 4 | A negative answer ("no debt securities registered") treated as missing information; three Ulta Beauty questions where the reference calls "FY2023" what the company reports as fiscal 2022 |
+| XBRL value wrong or different from the reference | 3 | General Mills revenue read from a partial concept (2.0 bn instead of ~16.9 bn), producing an absurd cash conversion cycle; Kraft Heinz 2018 inventory; American Water Works dividends |
+| Agent treats "missing in XBRL" as "zero" | 1 | PepsiCo restructuring costs: the question says "if not outlined, state 0", and the agent answered 0 instead of falling back to the filings |
+
+**How many of these are real errors?** Re-reading the 31 answers, roughly half are clear system failures and half are debatable:
+- **About 14 clear errors**: evidence pages not retrieved (6), wrong or over-restrictive filters (3–4), wrong XBRL values (2: General Mills revenue, Kraft Heinz inventory), the agent answering 0 instead of falling back (1), and a refusal when the answer was in the context (1).
+- **About 17 debatable cases**: a correct calculation with a different metric definition that the question does not specify (6), a different reading of a qualitative question (5, some of which are weaker than the reference), a fiscal-year naming mismatch between the reference and the company's filings (3), questions that do not name the company or the document (2), and one rounding difference (1).
+
+Counting every debatable case as correct would give about 0.85, which overstates the system; 0.69 is a strict lower bound. The classification matters more than the single number: the system does not invent figures and computes correctly, and its real limits are finding the right page when filters or retrieval fail, plus a few unreliable XBRL values. The rest reflects ambiguity in the benchmark, which the FinanceBench authors also acknowledge.
+
+What the test set adds to the development analysis:
+- **The numeric branch fails on data, not on reasoning**: its three errors on `metrics-generated` questions all come from XBRL values, none from the calculation. The General Mills case shows a concept in the metric vocabulary that is not equivalent to total revenue for every company.
+- **Most text-branch errors are not retrieval failures**: only 6 of 22 come from a missing page. Filters, over-cautious refusals and metric definitions account for the rest.
+- **The router is conservative**: some ratios computable from XBRL (Amcor quick ratio, Pfizer PP&E) were sent to the RAG branch, which could not find the balance sheet and refused.
+### Future work
+These changes come from the test-set analysis. They are not applied, so that the reported test score remains a clean measurement; each would need to be validated on the development set first.
+- Retry retrieval without filters when the extracted filters return no pages.
+- Check the revenue concepts in the metric vocabulary (General Mills) and the 2018 inventory value for Kraft Heinz.
+- Make "value not found in XBRL" always lead to `MISSING_DATA`, even when the question suggests a default answer.
+- Route annual balance-sheet ratios to the financial agent even when the question asks whether the metric is relevant.
+- Expose the metric definition used (e.g. which assets enter the quick ratio) more explicitly in the answer, since definition mismatches are the largest error category.
+- Compare page-level chunking with other strategies on the development set: fixed-size token chunks with overlap (NVIDIA found 1,024 tokens with 15% overlap best on FinanceBench) and semantic chunking, where a model places the boundaries where the topic changes (the best page-level retrieval on FinanceBench in a 2026 study of parsing and chunking). Retrieved chunks would be mapped back to their page, so the evaluation stays comparable.
+- Evaluate stronger models for the generator, router and filter extraction. The system uses free open-weight models, and several text-branch errors (refusals with the evidence in context, ambiguous questions, filter extraction) depend on model judgment, so a more capable model is likely to help there; this has not been measured. Errors from metric definitions and XBRL data would not change with a different model.
 
 ---
 
@@ -244,7 +303,7 @@ The four tools follow the same split as the graph: `ask_finrag` gives the evalua
 - [x] Cross-encoder reranking
 - [x] Numerical tools on XBRL data (SEC `companyfacts` API), router and financial agent with fallback to RAG
 - [x] MCP server exposing the full pipeline, search and financial tools
-- [ ] Final evaluation on the test set
+- [x] Final evaluation on the test set
 
 ---
 
@@ -275,7 +334,7 @@ financial_agentic_rag/
 ## How to run
 
 1. **Environment**: Python 3.12, `pip install -e .`, PyTorch with CUDA.
-2. **Secrets** in `.env`: `OPENROUTER_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `SEC_USER_AGENT` (name and contact email, required by the SEC).
+2. **Secrets** in `.env`: `OPENROUTER_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `SEC_USER_AGENT` (name and contact email, required by the SEC).
 3. **Qdrant**: `docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v "<project>/qdrant_storage:/qdrant/storage" qdrant/qdrant`
 4. **Filings**: download the FinanceBench questions and PDFs, extract pages, compute embeddings, load Qdrant, add metadata (notebooks in `notebooks/`).
 5. **XBRL data**: download companyfacts for the companies in `company_cik.json`, flatten and clean them into `xbrl_facts_annual.parquet`.
@@ -289,8 +348,9 @@ financial_agentic_rag/
 - FinanceBench questions are single-company and single-turn; cross-company comparisons are not covered by the reference answers.
 - Some reference answers are ambiguous or contestable, as acknowledged by the FinanceBench authors; most residual errors are differences in metric definitions.
 - The XBRL tools cover annual 10-K line items only: quarterly figures, non-GAAP metrics, guidance and segment breakdowns go through the RAG branch.
-- The development set has 51 questions: differences of one or two answers between experiments are within noise.
-- The generator currently runs on a free OpenRouter endpoint; cost per question is not yet reported.
+- The development set has 51 questions: differences of one or two answers between experiments are within noise, and prompts tuned on it generalize only partly (0.84 on development vs 0.69 on test).
+- Per-step improvements (filters, reranking, routing) are measured on the development set only; the test set measures the final system as a whole.
+- All LLM roles (router, filter extraction, financial agent, generator, judge) use free open-weight models on OpenRouter, not frontier models; cost per question is not yet reported.
 
 ---
 
@@ -304,6 +364,7 @@ financial_agentic_rag/
 - Anthropic, *Introducing Contextual Retrieval*, 2024
 - Anthropic, *Building effective agents*, 2024
 - NVIDIA, *Finding the Best Chunking Strategy for Accurate AI Responses*
+- *Empirical Evaluation of PDF Parsing and Chunking for Financial Question Answering with RAG*, arXiv 2604.12047, 2026
 - Google, *EmbeddingGemma 2* model card
 - *Model Context Protocol* specification, and FastMCP documentation
 - SEC, *EDGAR Application Programming Interfaces*
