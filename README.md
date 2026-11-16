@@ -98,13 +98,13 @@ Embedding the whole corpus took **71 minutes** on an RTX 4050 Laptop GPU (6 GB V
 | --- | --- | --- |
 | Generator | `nvidia/nemotron-3.5-super-vl:free` (OpenRouter) | `temperature=0` |
 | Router | same as generator | Structured output, reasoning disabled (`reasoning.effort = "none"`): ~1.6 s per question |
-| Financial agent | same as generator | Tool calling (`bind_tools`), low reasoning effort |
+| Financial agent | same as generator | Tool calling (`bind_tools`), default reasoning |
 | Filter extraction | same as generator | Structured output with Pydantic; company constrained to the codes in the index (`Literal`) |
 | Judge | `google/gemma-4-26b-a4b-it` (OpenRouter) | Different model family from the generator, to avoid self-preference bias |
 | Embeddings | `google/embeddinggemma-2` | Local, BF16 |
 | Reranker | `cross-encoder/ettin-reranker-400m-v1` | Local cross-encoder, BF16, 8K-token context (long pages fit) |
 
-The model reasons by default, and reasoning tokens count against the output limit: without an explicit limit, the router once spent its whole 4,000-token budget reasoning on a two-way classification and never produced an answer. Reasoning is therefore set explicitly per node through OpenRouter's `reasoning` parameter.
+The model reasons by default, and reasoning tokens count against the output limit: without an explicit limit, the router once spent its whole 4,000-token budget reasoning on a two-way classification and never produced an answer. Reasoning is therefore disabled for the router through OpenRouter's `reasoning` parameter, while the financial agent and the generator keep the model's default, since they need multi-step reasoning on figures.
 
 ---
 
@@ -205,6 +205,37 @@ When the information is missing, the system **refuses or falls back** instead of
 
 ---
 
+## MCP server
+
+The system is also exposed as a **Model Context Protocol** server (`mcp_server.py`, built with FastMCP), so any MCP client (Claude Code, Claude Desktop, other agents) can use it as a tool.
+
+| Tool | What it does |
+| --- | --- |
+| `ask_finrag(question)` | Runs the whole graph (router, financial agent, fallback, RAG) and returns the answer, the branch taken, whether pages were retrieved, and the page references `{doc, page}`. |
+| `get_financial_metric(company, metric, fiscal_year)` | Reads one annual value from the XBRL table, with its source (concept, period end, filing date). If the value is missing, it returns `value: null` and a note pointing to the filings. |
+| `search_filings(query, company?, fiscal_year?, doc_type?, k=3)` | Filtered vector search over the filings followed by cross-encoder reranking (20 candidates → `k` pages). Returns document, page, reranker score and page text. |
+| `calculator(expression)` | Exact arithmetic on raw figures, evaluated through the AST (no `eval`). |
+
+The four tools follow the same split as the graph: `ask_finrag` gives the evaluated pipeline as a single call, and the other three let a client compose its own steps.
+
+**Design choices**
+- **Thin wrappers**: the tools import the same functions used by the graph (`get_metric`, `search_pages`, `rerank_pages`, `calculate`), so the server and the evaluated pipeline cannot drift apart. Only descriptions and error handling are specific to MCP.
+- **Descriptions written for an external model**: they state what each tool does *not* cover (quarterly, non-GAAP, segments), which identifiers to use (company codes, fiscal year of the figure rather than the filing year, zero-indexed pages), and what to do when a value is missing.
+- **Filters as parameters**: in `search_filings` the client fills company, year and document type itself, so filter extraction needs no extra LLM call.
+- **Validation before execution**: company and metric are `Literal` types, so an unknown company (e.g. one outside the corpus) is rejected with the list of covered companies, and empty questions never reach the graph.
+- **Errors for the client, details in the logs**: known failures (vector store down, model rate limit or timeout, invalid expression, GPU out of memory) return a short message saying what to do; unexpected exceptions are masked (`mask_error_details`) and logged with the stack trace.
+- **HTTP transport**: the server is started once in the project environment, keeps the encoder and reranker loaded in memory, and serves any client at `http://127.0.0.1:8000/mcp`.
+
+**Observed behaviour with Claude Code** (qualitative tests, not part of the evaluation):
+- *Single annual value* (3M capex FY2018): the client calls `get_financial_metric` directly and skips the full pipeline.
+- *Comparison between two companies* (Adobe vs Corning operating margin), which FinRAG alone does not support: the client splits it into four `get_financial_metric` calls and notes the different fiscal year ends from `period_end`.
+- *Missing XBRL value* (Microsoft D&A FY2023): the client receives `value: null` with the note, then looks the figure up in the filings. It finds "Depreciation, amortization, and other" in the cash flow statement and pure depreciation in the notes, and explains why the two differ.
+- *Follow-up question* ("And in 2022?"): the client rewrites it as complete questions before calling the tools. Multi-turn use is handled by the client, with no change to the graph.
+- **Limitation**: the client did not use `calculator` and computed ratios itself. The results were correct, but an MCP server can only suggest tool use, not enforce it as the agent prompt does inside the graph.
+- In the missing-value case the client chose `ask_finrag` instead of `search_filings`: each call then went through the router and the XBRL agent before falling back to retrieval, which works but adds latency.
+
+---
+
 ## Roadmap
 
 - [x] Data checks, page-level index, baseline RAG graph
@@ -212,8 +243,7 @@ When the information is missing, the system **refuses or falls back** instead of
 - [x] Metadata extraction and filtered retrieval
 - [x] Cross-encoder reranking
 - [x] Numerical tools on XBRL data (SEC `companyfacts` API), router and financial agent with fallback to RAG
-- [ ] MCP server exposing the search and financial tools
-- [ ] Conversational interface (memory, query rewriting for follow-up questions)
+- [x] MCP server exposing the full pipeline, search and financial tools
 - [ ] Final evaluation on the test set
 
 ---
@@ -232,6 +262,7 @@ financial_agentic_rag/
 │   ├── tools.py            # search_pages, rerank_pages, filter extraction, financial tools
 │   ├── prompts.py          # router, agent, generation, filter extraction and judge prompts
 │   ├── agents.py           # LangGraph state, nodes and graph
+│   ├── mcp_server.py       # MCP server (FastMCP, HTTP transport)
 │   └── eval_langhfuse.py   # Langfuse task and evaluators
 ├── notebooks/              # data exploration, ingestion, checks
 ├── scripts/                # dataset creation, experiments
@@ -249,6 +280,7 @@ financial_agentic_rag/
 4. **Filings**: download the FinanceBench questions and PDFs, extract pages, compute embeddings, load Qdrant, add metadata (notebooks in `notebooks/`).
 5. **XBRL data**: download companyfacts for the companies in `company_cik.json`, flatten and clean them into `xbrl_facts_annual.parquet`.
 6. **Evaluation**: create the Langfuse dataset, then run the experiments script.
+7. **MCP server**: `python -m finrag.mcp_server` (with Qdrant running), then connect a client, e.g. `claude mcp add --transport http finrag http://127.0.0.1:8000/mcp`.
 
 ---
 
@@ -273,4 +305,5 @@ financial_agentic_rag/
 - Anthropic, *Building effective agents*, 2024
 - NVIDIA, *Finding the Best Chunking Strategy for Accurate AI Responses*
 - Google, *EmbeddingGemma 2* model card
+- *Model Context Protocol* specification, and FastMCP documentation
 - SEC, *EDGAR Application Programming Interfaces*

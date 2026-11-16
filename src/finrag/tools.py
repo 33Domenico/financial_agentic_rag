@@ -94,7 +94,21 @@ def search_pages(query: str,company: str | None = None, fiscal_year: int | None=
  
 
 def rerank_pages(query: str,doc_list:list[dict], k: int= TOP_K)-> list[dict]:
-    """"""
+    """Rerank candidate pages with a cross-encoder and keep the most relevant ones.
+
+    The cross-encoder reads the question and each page together, so it ranks pages
+    more accurately than the embedding similarity used by search_pages. Each page is
+    scored as "{doc_name}\\n{text}", so the document name contributes to relevance.
+
+    Args:
+        query: The question in natural language.
+        doc_list: Candidate pages as returned by search_pages.
+        k: Number of pages to keep.
+
+    Returns:
+        Up to k pages, ordered by reranker score. Each page is the original dict
+        from search_pages with an added "rerank_score".
+    """
     model=get_reranker()
     page_list_formatted=[f"{doc["doc_name"]} \n{doc["text"]}" for doc in doc_list ]
     ranked=model.rank(query,page_list_formatted,top_k=k)
